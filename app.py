@@ -93,29 +93,57 @@ with tab1:
 
 # ---------- Reporte 2 ----------
 with tab2:
+    f1, f2 = st.columns(2)
     opciones = ["Todos"] + [f"{c} - {n}" for c, n in
                             prov[["Código", "Proveedor"]].drop_duplicates().sort_values("Código").values]
     sel = st.selectbox("Proveedor", opciones)
+    bods = sorted(est["Bodega"].unique())
+    sel_bod = st.multiselect("Bodega", bods, default=bods)
+
     e = est if sel == "Todos" else est[est["Cód. Proveedor"] == sel.split(" - ")[0]]
+    e = e[e["Bodega"].isin(sel_bod)]
 
     buscar2 = st.text_input("Buscar estadístico (código o descripción)", key="b2")
     if buscar2:
         e = e[e["Estadístico"].str.contains(buscar2, case=False) | e["Descripción"].str.contains(buscar2, case=False)]
 
-    solo = st.checkbox("Solo estadísticos con faltante (no recibido > 0)")
+    solo = st.checkbox("Solo con faltante (no recibido > 0)")
     if solo:
         e = e[e["No Recibido"] > 0]
 
-    cols = ["Estadístico", "Descripción", "Cód. Proveedor", "Proveedor",
-            "Solicitado", "Recibido", "No Recibido"]
-    e = e[cols].copy()
-    e["% Cumplimiento"] = (e["Recibido"] / e["Solicitado"]).where(e["Solicitado"] > 0)
-    e = e.sort_values("No Recibido", ascending=False)
+    vista = st.radio("Vista", ["Una fila por bodega", "Bodegas lado a lado"], horizontal=True)
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Estadísticos", len(e))
-    c2.metric("Solicitado", fmt_int(e["Solicitado"].sum()))
-    c3.metric("Recibido", fmt_int(e["Recibido"].sum()))
+    # Resumen por bodega
+    rb = calcular(e, "Bodega")
+    cols_b = st.columns(max(1, len(rb)))
+    for col, row in zip(cols_b, rb.itertuples(index=False)):
+        col.metric(row.Bodega, f"{row[4]:.1%}" if pd.notna(row[4]) else "-",
+                   f"Solic. {fmt_int(row.Solicitado)} | Rec. {fmt_int(row.Recibido)}",
+                   delta_color="off")
 
-    st.dataframe(estilo(e, meta), use_container_width=True, hide_index=True)
-    st.download_button("⬇️ Descargar", a_excel(e), "detalle_estadisticos.xlsx")
+    base = ["Estadístico", "Descripción", "Cód. Proveedor", "Proveedor"]
+    if vista == "Una fila por bodega":
+        t2 = e[base + ["Bodega", "Solicitado", "Recibido", "No Recibido"]].copy()
+        t2["% Cumplimiento"] = (t2["Recibido"] / t2["Solicitado"]).where(t2["Solicitado"] > 0)
+        t2 = t2.sort_values(["Estadístico", "Bodega"])
+        st.dataframe(estilo(t2, meta), use_container_width=True, hide_index=True)
+        salida = t2
+    else:
+        w = e.pivot_table(index=base, columns="Bodega",
+                          values=["Solicitado", "Recibido", "No Recibido"],
+                          aggfunc="sum", fill_value=0)
+        w.columns = [f"{b} | {m}" for m, b in w.columns]
+        w = w.reset_index()
+        orden_cols = []
+        for b in sorted(e["Bodega"].unique()):
+            w[f"{b} | % Cumpl."] = (w[f"{b} | Recibido"] / w[f"{b} | Solicitado"]).where(
+                w[f"{b} | Solicitado"] > 0)
+            orden_cols += [f"{b} | Solicitado", f"{b} | Recibido",
+                           f"{b} | No Recibido", f"{b} | % Cumpl."]
+        w = w[base + orden_cols]
+        fmt = {c: fmt_int for c in orden_cols if not c.endswith("% Cumpl.")}
+        fmt.update({c: "{:.1%}" for c in orden_cols if c.endswith("% Cumpl.")})
+        st.dataframe(w.style.format(fmt, na_rep="-"), use_container_width=True, hide_index=True)
+        salida = w
+
+    st.download_button("⬇️ Descargar", a_excel(salida), "detalle_estadisticos_por_bodega.xlsx")
