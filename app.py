@@ -57,6 +57,10 @@ except Exception as e:
 if prov.empty:
     st.warning("No encontré proveedores en el archivo.")
     st.stop()
+if "Bodega" not in est.columns:
+    st.error("El archivo parser.py en GitHub está desactualizado (no trae la columna Bodega). "
+             "Reemplázalo por la versión nueva y reinicia la app.")
+    st.stop()
 
 with st.sidebar:
     meta = st.slider("Meta de nivel de servicio", 0.50, 1.00, 0.95, 0.01, format="%.2f")
